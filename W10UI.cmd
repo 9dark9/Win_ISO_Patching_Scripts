@@ -1,5 +1,5 @@
 @setlocal DisableDelayedExpansion
-@set uiv=v10.64
+@set uiv=v10.65
 @echo off
 :: enable debug mode, you must also set target and repo (if updates are not beside the script)
 set _Debug=0
@@ -110,24 +110,6 @@ set "ISODir="
 
 :: delete DVD distribution folder after creating updated ISO
 set Delete_Source=0
-
-:: LTSC 2021 Libs Fix
-set "ltscfix="
-
-:: disable automatically installing suggested apps
-set "nosuggapp="
-
-:: disable suggested tips
-set "nosuggtip="
-
-:: disable reserved storage
-set "norestorage="
-
-:: disable game bar
-set "nogamebar="
-
-:: set up without internet
-set "oobebypass="
 
 :: ###################################################################
 :: # NORMALLY THERE IS NO NEED TO CHANGE ANYTHING BELOW THIS COMMENT #
@@ -268,7 +250,6 @@ cd /d "!_work!"
 set psfcpp=0
 if exist "PSFExtractor.exe" set psfcpp=1&set _exe="!_work!\PSFExtractor.exe"
 if exist "bin\PSFExtractor.exe" set psfcpp=1&set _exe="!_work!\bin\PSFExtractor.exe"
-if /i %xOS%==amd64 if exist "bin\bin64\PSFExtractor.exe" set psfcpp=1&set _exe="!_work!\bin\bin64\PSFExtractor.exe"
 if not defined _sdr set psfcpp=0
 set _reMSU=0
 set psfwim=0
@@ -308,12 +289,6 @@ delete_source
 autostart
 adddrivers
 drv_source
-ltscfix
-nosuggapp
-nosuggtip
-norestorage
-nogamebar
-oobebypass
 ) do (
 call :ReadINI %%#
 )
@@ -464,6 +439,8 @@ set targetname=0
 set _skpd=0
 set _skpp=0
 set uupboot=0
+set peTarget=0
+set pe_lcu=0
 if not defined _all set _all=1
 if %_init%==1 if "!target!"=="" if exist "*.wim" (for /f "tokens=* delims=" %%# in ('dir /b /a:-d "*.wim" ^| findstr /i /v "Windows1.*\-KB"') do set "target=!_work!\%%~nx#")
 if "!target!"=="" set "target=%SystemDrive%"
@@ -491,6 +468,9 @@ set "mountdir=!target!"
 set arch=x86
 if exist "!target!\Windows\Servicing\Packages\*~amd64~~*.mum" set arch=x64
 if exist "!target!\Windows\Servicing\Packages\*~arm64~~*.mum" set arch=arm64
+dir /b /s "!target!\Windows\Servicing\Version\amd64_installed" %_Nul3% && set arch=x64
+dir /b /s "!target!\Windows\Servicing\Version\arm64_installed" %_Nul3% && set arch=arm64
+if exist "!target!\Windows\System32\wpeinit.exe" set peTarget=1
 )
 if %wim%==1 (
 echo.
@@ -509,6 +489,7 @@ for /L %%# in (1,1,!imgcount!) do (
   )
 set "indices=*"
 set wimfiles=1
+dism.exe /english /get-wiminfo /wimfile:"%targetname%" /index:1 | find /i ": WindowsPE" %_Nul1% && set peTarget=1
 cd /d "!_work!"
 )
 if %dvd%==1 (
@@ -528,9 +509,10 @@ for /f "tokens=2 delims=: " %%# in ('dism.exe /english /get-wiminfo /wimfile:"so
 for /L %%# in (1,1,!imgcount!) do (
   for /f "tokens=1* delims=: " %%i in ('dism.exe /english /get-wiminfo /wimfile:"sources\install.wim" /index:%%# ^| findstr /b /c:"Name"') do set name%%#="%%j"
   )
-set "indices=*"
 set "targetname=install.wim"
+set "indices=*"
 set wimfiles=1
+set peTarget=1
 cd /d "!_work!"
 )
 if %_init%==1 (goto :check) else (goto :mainmenu)
@@ -654,6 +636,13 @@ if %_build% geq 22000 (
 if %LCUwinre% equ 2 (set LCUwinre=0) else (set LCUwinre=1)
 if %_build% geq 26052 (set LCUwinre=0)
 )
+if %_build% geq 26052 (
+if %peTarget% equ 1 call :boot_lcu
+)
+if %pe_lcu% equ 1 (
+if %offline%==1 (set LCUmsuExpand=3&set u_msulcu=3)
+if %wim%==1 (set LCUmsuExpand=3&set u_msulcu=3)
+)
 if %_build% lss 22621 set LCUmsuExpand=0
 if %_build% geq 26052 (
 if %LCUmsuExpand% equ 2 (set LCUmsuExpand=0) else if %LCUmsuExpand% equ 3 (set LCUmsuExpand=0) else if %LCUmsuExpand% equ 9 (set LCUmsuExpand=0) else (set LCUmsuExpand=1)
@@ -755,6 +744,25 @@ set "target=!_work!\DVD10UI"
 )
 call :extract
 if %_sum%==0 goto :fin
+goto :igonline
+
+:boot_lcu
+if %offline%==1 (
+if exist "!target!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" findstr /i Baseline "!target!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" %_Nul1% || set pe_lcu=1
+goto :eof
+)
+if %wim%==1 set "_w_=!target!"
+if %dvd%==1 set "_w_=!target!\sources\boot.wim"
+if %_wlib% equ 0 for /f %%# in ('dism.exe /English /List-Image /ImageFile:"!_w_!" /Index:1 ^| findstr /i "Package_for_RollupFix.*.mum"') do (
+%_psc% "$f=[IO.File]::ReadAllText('!_batp!') -split ':wimmsu\:.*';iex ($f[1]);E '!_w_!' '%%#' '%SystemRoot%\temp\%%~nx#'"
+)
+if %_wlib% equ 1 for /f %%# in ('^"!_wimlib! dir "!_w_!" 1 --path=Windows\Servicing ^| findstr /i "Package_for_RollupFix.*.mum"^"') do (
+!_wimlib! extract "!_w_!" 1 %%# --dest-dir="%SystemRoot%\temp" --no-acls --no-attributes %_Nul3%
+)
+if exist "%SystemRoot%\temp\Package_for_RollupFix*.mum" findstr /i Baseline "%SystemRoot%\temp\Package_for_RollupFix*.mum" %_Nul1% || set pe_lcu=1
+if exist "%SystemRoot%\temp\Package_for_RollupFix*.mumx*" set pe_lcu=1
+del /f /q %SystemRoot%\temp\*.mum %_Nul3%
+goto :eof
 
 :igonline
 if %online%==0 goto :igoffline
@@ -853,8 +861,8 @@ if exist "!_cabdir!\du\replacementmanifests\" xcopy /CERY "!_cabdir!\du\replacem
 rmdir /s /q "!_cabdir!\du\" %_Nul3%
 
 :dvdproceed
-:: xcopy /CRY "!target!\efi\microsoft\boot\fonts" "!target!\boot\fonts\" %_Nul1%
-:: if %_DNF%==1 if exist "!target!\sources\sxs\*netfx3*.cab" (del /f /q "!target!\sources\sxs\*netfx3*.cab" %_Nul1%)
+xcopy /CRY "!target!\efi\microsoft\boot\fonts" "!target!\boot\fonts\" %_Nul1%
+if %_DNF%==1 if exist "!target!\sources\sxs\*netfx3*.cab" (del /f /q "!target!\sources\sxs\*netfx3*.cab" %_Nul1%)
 cd /d "!target!\sources"
 for /f %%# in ('dir /b /a:-d install.wim') do set "_size=000000%%~z#"
 cd /d "!_work!"
@@ -1401,7 +1409,7 @@ if %u_msulcu% equ 9 if not exist "!_cabdir!\LCUbase\%cuvr%-!package!" echo !pack
   copy /y "!repo!\!package!" "!_cabdir!\LCUbase\%cuvr%-!package!" %_Nul1%
   )
 )
-if %online%==0 if %_build% geq 26052 if %copyLCU% equ 0 (
+if %online%==0 if %_build% geq 26052 if %pe_lcu% equ 1 if %copyLCU% equ 0 (
 if not exist "!_cabdir!\LCUwpe\*Windows*%kb%*.msu" if not exist "!_cabdir!\LCUwpe\%cuvr%-!package!" (
   copy /y "!repo!\!package!" "!_cabdir!\LCUwpe\%cuvr%-!package!" %_Nul1%
   )
@@ -1674,7 +1682,7 @@ call :sbsconfig 9 9 1
 )
 if defined netpack set "ldr=!netpack! !ldr!"
 if defined ekbpack set "ldr=!ekbpack! !ldr!"
-for %%# in (dupdt,cupdt,supdt,fupdt,safeos,secureboot,edge,ldr,cumulative,lcumsu) do if defined %%# set overall=1
+for %%# in (dupdt,cupdt,supdt,fupdt,safeos,secureboot,edge,ldr,cumulative,lcumsu,lcuwpe) do if defined %%# set overall=1
 if defined servicingstack (
 if %verb%==1 (
 echo.
@@ -1758,65 +1766,6 @@ call :addlcu DismLCU_boot
 if %doinstall%==0 goto :cuwd
 call :addlcu DismLCU
 if %_build% leq 14393 if %wimfiles% equ 1 call :MeltdownSpectre
-if %ltscfix%==1 if exist "!mumtarget!\Windows\Servicing\Packages\Microsoft-Windows-EnterpriseS*Edition~31bf3856ad364e35~%sss%~~*.mum" (
-echo Adding VP9VideoExtensions...
-%_dism2%:"!_cabdir!" %dismtarget% /Add-ProvisionedAppxPackage /PackagePath:"%~dp0bin\Microsoft.VP9VideoExtensions_8wekyb3d8bbwe.%arch%.Appx" /LicensePath:"%~dp0bin\Microsoft.VP9VideoExtensions_8wekyb3d8bbwe.%arch%.xml" %_Nul2%
-)
-if %nosuggapp%==1 (
-echo Disable download Third-Party Apps...
-reg.exe load "HKLM\Usertemp" "!mumtarget!\Users\Default\NTUSER.DAT" %_Nul3%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "ContentDeliveryAllowed" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "DesktopSpotlightOemEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "FeatureManagementEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "OemPreInstalledAppsEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "PreInstalledAppsEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "PreInstalledAppsEverEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RemediationRequired" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SilentInstalledAppsEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SlideshowEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SoftLandingEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SystemPaneSuggestionsEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe unload "HKLM\Usertemp" %_Nul3%
-)
-if %nosuggtip%==1 (
-echo Disable unused Suggestions and Functions...
-reg.exe load "HKLM\Usertemp" "!mumtarget!\Users\Default\NTUSER.DAT" %_Nul3%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-310093Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-338389Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-338393Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-353694Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-353696Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "RotatingLockScreenEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v "SubscribedContent-338387Enabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers" /v "BackgroundType" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\DesktopSpotlight\Settings" /v "EnabledState" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" /v "IsDynamicSearchBoxEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "Start_IrisRecommendations" /t REG_DWORD /d "0" /f %_Nul1%
-:: copy %SysPath%\reg.exe %SysPath%\regalt.exe %_Nul1%
-:: regalt.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v "TaskbarDa" /t REG_DWORD /d "0" /f %_Nul1%
-:: del /q %SysPath%\regalt.exe %_Nul1%
-reg.exe unload "HKLM\Usertemp" %_Nul3%
-)
-if %norestorage%==1 (
-echo Disable Reserved Storage...
-reg.exe load "HKLM\Softtemp" "!mumtarget!\Windows\System32\Config\SOFTWARE" %_Nul3%
-reg.exe add "HKLM\Softtemp\Microsoft\Windows\CurrentVersion\ReserveManager" /v "MiscPolicyInfo" /t REG_DWORD /d "2" /f %_Nul1%
-reg.exe add "HKLM\Softtemp\Microsoft\Windows\CurrentVersion\ReserveManager" /v "PassedPolicy" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe add "HKLM\Softtemp\Microsoft\Windows\CurrentVersion\ReserveManager" /v "ShippedWithReserves" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe unload "HKLM\Softtemp" %_Nul3%
-)
-if %nogamebar%==1 (
-echo Disable Game Bar...
-reg.exe load "HKLM\Usertemp" "!mumtarget!\Users\Default\NTUSER.DAT" %_Nul3%
-reg.exe add "HKLM\Usertemp\SOFTWARE\Microsoft\GameBar" /v "UseNexusForGameBarEnabled" /t REG_DWORD /d "0" /f %_Nul1%
-reg.exe unload "HKLM\Usertemp" %_Nul3%
-)
-if %oobebypass%==1 (
-echo Set up without internet create local account...
-reg.exe load "HKLM\Softtemp" "!mumtarget!\Windows\System32\Config\SOFTWARE" %_Nul3%
-reg.exe add "HKLM\Softtemp\Microsoft\Windows\CurrentVersion\OOBE" /v "BypassNRO" /t REG_DWORD /d "1" /f %_Nul1%
-reg.exe unload "HKLM\Softtemp" %_Nul3%
-)
 if not exist "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" goto :cuwd
 if %online%==1 goto :cuwd
 if not defined lcumsu goto :cuwd
@@ -2165,8 +2114,12 @@ if %_build% geq 20231 if %_build% lss 26052 if %xmsu% equ 0 (
   set "lcudir=%dest%"
   set "lcupkg=!package!"
 )
+set in_cu=0
+if exist "!mumtarget!\Windows\System32\wpeinit.exe" if exist "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" (
+findstr /i Baseline "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" %_Nul1% || set in_cu=1
+)
 if exist "!mumtarget!\Windows\System32\wpeinit.exe" (
-if exist "!_cabdir!\LCUwpe\*.msu" if exist "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" (
+if %in_cu% equ 1 if exist "!_cabdir!\LCUwpe\*.msu" (
   if defined lcuwpe goto :eof
   for /f "tokens=* delims=" %%# in ('dir /b /on "!_cabdir!\LCUwpe\*.msu"') do set "lcuwpe="!_cabdir!\LCUwpe\%%#""
   goto :eof
@@ -3138,21 +3091,6 @@ takeown /f "!mumtarget!\Windows\WinSxS\Temp\PendingRenames\*" /A %_Null%
 icacls "!mumtarget!\Windows\WinSxS\Temp\PendingRenames\*" /grant *S-1-5-32-544:F %_Null%
 del /f /q "!mumtarget!\Windows\WinSxS\Temp\PendingRenames\*" %_Nul3%
 )
-if exist "!mumtarget!\INF\setupapi.offline.log" (
-del /f /q "!mumtarget!\Windows\INF\setupapi.offline.log" %_Nul3%
-)
-if exist "!mumtarget!\Windows\*.log" (
-del /f /q "!mumtarget!\Windows\*.log" %_Nul3%
-)
-if exist "!target!\sources\SetupDU_*.spdx.json*" (
-del /f /q "!target!\sources\SetupDU_*.spdx.json*" %_Nul3%
-)
-if exist "!target!\__chunk_data" (
-del /f /q "!target!\__chunk_data" %_Nul3%
-)
-if exist "!target!\sources\_manifest\" (
-rmdir /s /q "!target!\sources\_manifest\" %_Nul3%
-)
 goto :eof
 
 :onlinepending
@@ -3832,7 +3770,7 @@ goto :mainmenu
 
 :ISO
 set imapi=0
-if not exist "!_oscdimg!" if not exist "!_work!\oscdimg.exe" if not exist "!_work!\bin\bin64\oscdimg.exe" if not exist "!_work!\bin\oscdimg.exe" if not exist "!_work!\cdimage.exe" if not exist "!_work!\bin\cdimage.exe" set imapi=1
+if not exist "!_oscdimg!" if not exist "!_work!\oscdimg.exe" if not exist "!_work!\bin\oscdimg.exe" if not exist "!_work!\cdimage.exe" if not exist "!_work!\bin\cdimage.exe" set imapi=1
 if %imapi%==1 if %_pwsh% equ 0 goto :eof
 if "!isodir!"=="" set "isodir=!_work!"
 call :DATEISO
@@ -3859,7 +3797,7 @@ echo ============================================================
 echo.
 echo ISO Location:
 echo "!isodir!"
-if exist "!_oscdimg!" (set _ff="!_oscdimg!") else if exist "!_work!\oscdimg.exe" (set _ff="!_work!\oscdimg.exe") else if exist "!_work!\bin\bin64\oscdimg.exe" (set _ff="!_work!\bin\bin64\oscdimg.exe") else if exist "!_work!\bin\oscdimg.exe" (set _ff="!_work!\bin\oscdimg.exe") else if exist "!_work!\cdimage.exe" (set _ff="!_work!\cdimage.exe") else (set _ff="!_work!\bin\cdimage.exe")
+if exist "!_oscdimg!" (set _ff="!_oscdimg!") else if exist "!_work!\oscdimg.exe" (set _ff="!_work!\oscdimg.exe") else if exist "!_work!\bin\oscdimg.exe" (set _ff="!_work!\bin\oscdimg.exe") else if exist "!_work!\cdimage.exe" (set _ff="!_work!\cdimage.exe") else (set _ff="!_work!\bin\cdimage.exe")
 cd /d "!target!"
 if /i not %arch%==arm64 (
 set "_u_=0"
@@ -3956,7 +3894,6 @@ del /f /q %SysPath%\ext-ms-win-security-slc-l1-1-0.dll %_Nul3%
 if /i not %xOS%==x86 del /f /q %SystemRoot%\SysWOW64\ext-ms-win-security-slc-l1-1-0.dll %_Nul3%
 )
 call :cleaner
-del /f /q "!target!\sources\testplugin.dll" %_Nul3%
 if defined tmpssu (
   for %%# in (%tmpssu%) do del /f /q "!repo!\%%~#" %_Nul3%
   set tmpssu=
@@ -3981,7 +3918,7 @@ echo.
 
 :E_Exit
 if %_embd% neq 0 goto :eof
-:: if %autostart% neq 0 goto :eof
+if %autostart% neq 0 goto :eof
 if %_Debug% neq 0 goto :eof
 echo.
 echo Press 9 or q to exit.
