@@ -1,5 +1,5 @@
 @setlocal DisableDelayedExpansion
-@set uiv=v10.66m
+@set uiv=v10.66m_hivefix
 @echo off
 :: enable debug mode, you must also set target and repo (if updates are not beside the script)
 set _Debug=0
@@ -797,6 +797,7 @@ if %_wlib% equ 1 for /f %%# in ('^"!_wimlib! dir "!_w_!" 1 --path=Windows\Servic
 )
 if exist "%SystemRoot%\temp\Package_for_RollupFix*.mum" findstr /i Baseline "%SystemRoot%\temp\Package_for_RollupFix*.mum" %_Nul1% || set pe_lcu=1
 if exist "%SystemRoot%\temp\Package_for_RollupFix*.mumx*" set pe_lcu=1
+del /f /q "%SystemRoot%\temp\*.mumx*" %_Nul3%
 del /f /q %SystemRoot%\temp\*.mum %_Nul3%
 goto :eof
 
@@ -849,12 +850,17 @@ if %_offdu%==1 if not exist "!_cabdir!\cmd_dvd\#.tag" (
   )
 )
 if not defined isoupdate goto :fin
+set "wpesetup=0"
+if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!mountdir!\Windows\servicing\MumX\*.mumx.esd" if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.cat" set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!_cabdir!\hive_new.txt" findstr /i /c:"WinPE-Setup-Package~" "!_cabdir!\hive_new.txt" >nul && set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!_cabdir!\hive_old.txt" findstr /i /c:"WinPE-Setup-Package~" "!_cabdir!\hive_old.txt" >nul && set "wpesetup=1"
 if %_offdu%==1 if not exist "!_cabdir!\du\" (
   mkdir "!_cabdir!\du" %_Nul3%
   for %%i in (!isoupdate!) do expand.exe -r -f:* "!repo!\%%~i" "!_cabdir!\du" %_Nul1%
   if %_build% geq 26100 if exist "!mountdir!\Windows\System32\ServicingCommon.dll" if not exist "!_cabdir!\du\ServicingCommon.dll" copy /y "!mountdir!\Windows\System32\ServicingCommon.dll" "!_cabdir!\du\" %_Nul3%
   if %_build% geq 26100 if exist "!mountdir!\Windows\System32\migwiz\unbcl.dll" if not exist "!_cabdir!\du\unbcl.dll" copy /y "!mountdir!\Windows\System32\migwiz\unbcl.dll" "!_cabdir!\du\" %_Nul3%
-  if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" (
+  if "!wpesetup!"=="1" (
   if exist "!mountdir!\sources\setup.exe" if exist "!_cabdir!\du\setup.exe" del /f /q "!_cabdir!\du\setup.exe" %_Nul3%
   if %_build% geq 26052 if exist "!mountdir!\sources\setuphost.exe" if exist "!_cabdir!\du\setuphost.exe" del /f /q "!_cabdir!\du\setuphost.exe" %_Nul3%
   )
@@ -863,7 +869,7 @@ if %_offdu%==1 if not exist "!_cabdir!\du\" (
   for /f %%# in ('dir /b /ad "!_cabdir!\du\*-*" %_Nul6%') do if exist "!cmd_source!\%%#\*.mui" copy /y "!_cabdir!\du\%%#\*" "!cmd_source!\%%#\" %_Nul3%
   if exist "!_cabdir!\du\replacementmanifests\" xcopy /CERY "!_cabdir!\du\replacementmanifests" "!cmd_source!\replacementmanifests\" %_Nul3%
 )
-if exist "!mountdir!\sources\setup.exe" if not exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" (
+if exist "!mountdir!\sources\setup.exe" if "!wpesetup!"=="0" (
   if not exist "!_cabdir!\du\" (
   mkdir "!_cabdir!\du" %_Nul3%
   for %%i in (!isoupdate!) do expand.exe -r -f:* "!repo!\%%~i" "!_cabdir!\du" %_Nul1%
@@ -1623,6 +1629,7 @@ set COMPONENTS=COMPONENTS
 set SOFTWARE=uiSOFTWARE
 set COMPONENTS=uiCOMPONENTS
 )
+if %verb%==1 if %_build% geq 26052 call :hivedump "!_cabdir!\hive_old.txt"
 set "_Wnn=HKLM\%SOFTWARE%\Microsoft\Windows\CurrentVersion\SideBySide\Winners"
 set "_Cmp=HKLM\%COMPONENTS%\DerivedData\Components"
 if exist "!mumtarget!\Windows\Servicing\Packages\*~arm64~~*.mum" (
@@ -1819,17 +1826,24 @@ call :addlcu DismLCU_winre
 :cuboot
 if %doboot%==0 goto :cuinstall
 set rem_rej=0
-if %_build% geq 26052 if exist "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum" (
+set "rej=0"
+if %_build% geq 26052 if exist "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum" set "rej=1"
+if %_build% geq 26052 if exist "!_cabdir!\hive_old.txt" findstr /i /c:"WinPE-Rejuv-Package" "!_cabdir!\hive_old.txt" >nul && set "rej=1"
+if %rej% equ 1 (
 if defined lcumsu set rem_rej=1
 if defined lcuwpe set rem_rej=1
 )
-if %rem_rej% equ 1 for /f "delims=" %%# in ('dir /b /a:-d "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum"') do (
+if %rem_rej% equ 1 if exist "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum" for /f "delims=" %%# in ('dir /b /a:-d "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum"') do (
 %_dism2%:"!_cabdir!" %dismtarget% /LogPath:"%_dLog%\DismNUL.log" /Remove-Package /PackageName:%%~n# %_Nul3%
+)
+if %rem_rej% equ 1 if not exist "!mumtarget!\Windows\Servicing\Packages\WinPE-Rejuv-Package~*.mum" if exist "!_cabdir!\hive_old.txt" for /f "tokens=* delims=" %%K in ('findstr /i /c:"WinPE-Rejuv-Package" "!_cabdir!\hive_old.txt"') do (
+for %%N in ("%%K") do %_dism2%:"!_cabdir!" %dismtarget% /LogPath:"%_dLog%\DismNUL.log" /Remove-Package /PackageName:%%~nxN %_Nul3%
 )
 call :addlcu DismLCU_boot
 :cuinstall
 if %doinstall%==0 goto :cuwd
 call :addlcu DismLCU
+if %verb%==1 if %_build% geq 26052 call :hivedump "!_cabdir!\hive_new.txt"
 if %_build% leq 14393 if %wimfiles% equ 1 call :MeltdownSpectre
 if %ltscfix%==1 if exist "!mumtarget!\Windows\Servicing\Packages\Microsoft-Windows-EnterpriseS*Edition~31bf3856ad364e35~%sss%~~*.mum" (
 echo Adding VP9VideoExtensions...
@@ -1902,6 +1916,7 @@ for /f %%# in ('dir /b /a:-d /od "!mumtarget!\Windows\Servicing\Packages\Package
 call :svcpkg "%%#"
 )
 :cuwd
+if %verb%==1 if %_build% geq 26052 if not exist "!_cabdir!\hive_new.txt" call :hivedump "!_cabdir!\hive_new.txt"
 if defined basekbn if %verb%==1 call :regBase
 if defined lcupkg call :ReLCU
 if defined callclean call :cleanup
@@ -1998,6 +2013,26 @@ if %1 neq 9 (echo New-ItemProperty '%_p_%' SupersededActions -Value %1 -Force -E
 if %2 neq 9 (echo New-ItemProperty '%_p_%' DisableResetbase -Value %2 -Force -EA 0)>>"!_cabdir!\W10UIreg.txt"
 if %3 neq 9 (echo New-ItemProperty '%_p_%' DisableComponentBackups -Value %3 -Force -EA 0)>>"!_cabdir!\W10UIreg.txt"
 %_Nul3% %_psc% "$r='!_cabdir!\W10UIreg.txt'; $f=[IO.File]::ReadAllText('!_batp!') -split ':cbsreg\:.*';iex ($f[1])"
+if %online%==0 call :hiveOFF
+goto :eof
+
+:hivedump
+:: %1 = output file
+if not defined _build goto :eof
+if %_build% lss 26052 goto :eof
+if not defined mumtarget goto :eof
+if not exist "!mumtarget!\Windows\servicing\MumX\*.mumx.esd" goto :eof
+set "hd=%~1"
+if exist "!hd!" del /f /q "!hd!" %_Nul3%
+if %online%==1 goto :hivedump_q
+call :hiveON
+:hivedump_q
+for %%P in (WinPE-Setup-Package~ WinPE-Rejuv-Package Package_for_RollupFix~ Package_for_ServicingStack Package_for_DotNetRollup) do (
+  for /f "tokens=* delims=" %%K in ('reg.exe query "HKLM\%SOFTWARE%\%_CBS%" /k /f "%%P" 2^>nul ^| findstr /i HKEY_LOCAL_MACHINE') do (
+    reg.exe query "%%K" /v CurrentState 2>nul | findstr /i "0x70" >nul && echo %%K>>"!hd!"
+    reg.exe query "%%K" /v Baseline 2>nul | findstr /i /r "0x1$" >nul && echo BASELINE %%K>>"!hd!"
+  )
+)
 if %online%==0 call :hiveOFF
 goto :eof
 
@@ -2239,9 +2274,16 @@ if %_build% geq 20231 if %_build% lss 26052 if %xmsu% equ 0 (
   set "lcupkg=!package!"
 )
 set in_cu=0
+if %_build% lss 26052 goto :proclcu_mum
+if not exist "!_cabdir!\hive_old.txt" goto :proclcu_mum
+if not exist "!mumtarget!\Windows\System32\wpeinit.exe" goto :proclcu_mum
+findstr /i /c:"BASELINE" "!_cabdir!\hive_old.txt" | findstr /i /c:"Package_for_RollupFix" >nul || set in_cu=1
+goto :proclcu_done
+:proclcu_mum
 if exist "!mumtarget!\Windows\System32\wpeinit.exe" if exist "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" (
 findstr /i Baseline "!mumtarget!\Windows\Servicing\Packages\Package_for_RollupFix*.mum" %_Nul1% || set in_cu=1
 )
+:proclcu_done
 if exist "!mumtarget!\Windows\System32\wpeinit.exe" (
 if %in_cu% equ 1 if exist "!_cabdir!\LCUwpe\*.msu" (
   if defined lcuwpe goto :eof
@@ -3006,12 +3048,17 @@ for /f "tokens=5 delims=.( " %%# in ('%_psc% "(gi '!mountdir!\Windows\system32\n
 goto :eof
 
 :boots
-if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" xcopy /CRUY "!mountdir!\sources" "!target!\sources\" %_Nul3%
+set "wpesetup=0"
+if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!mountdir!\Windows\servicing\MumX\*.mumx.esd" if exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.cat" set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!_cabdir!\hive_new.txt" findstr /i /c:"WinPE-Setup-Package~" "!_cabdir!\hive_new.txt" >nul && set "wpesetup=1"
+if "!wpesetup!"=="0" if exist "!_cabdir!\hive_old.txt" findstr /i /c:"WinPE-Setup-Package~" "!_cabdir!\hive_old.txt" >nul && set "wpesetup=1"
+if "!wpesetup!"=="1" xcopy /CRUY "!mountdir!\sources" "!target!\sources\" %_Nul3%
 del /f /q "!target!\sources\background.bmp" %_Nul3%
 del /f /q "!target!\sources\xmllite.dll" %_Nul3%
 call :doBootFiles "!target!"
 if exist "!target!\setup.exe" copy /y "!mountdir!\setup.exe" "!target!\" %_Nul3%
-if defined isoupdate if not exist "!mountdir!\Windows\Servicing\Packages\WinPE-Setup-Package~*.mum" (
+if defined isoupdate if "!wpesetup!"=="0" (
   set uupboot=1
   mkdir "!_cabdir!\du" %_Nul3%
   for %%i in (!isoupdate!) do expand.exe -r -f:* "!repo!\%%~i" "!_cabdir!\du" %_Nul1%
